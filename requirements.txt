@@ -1,1 +1,5 @@
 streamlit
+requests
+folium
+streamlit-folium
+google-cloud-storage
