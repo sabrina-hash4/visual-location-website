@@ -178,7 +178,7 @@ with col2:
 
 btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 with btn_col2:
-    if st.button("✅ Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
+    if st.button("🤓 Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
         with st.spinner("Crunching the numbers..."):
             result = call_evaluate_api(
                 guessed_lon=st.session_state.guessed_lon,
