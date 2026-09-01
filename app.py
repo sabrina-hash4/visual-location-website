@@ -6,6 +6,7 @@ import os
 import folium
 from streamlit_folium import st_folium
 from google.cloud import storage
+from google.oauth2 import service_account
 
 
 BUCKET_NAME = "visual-geolocation-osv5m"
@@ -14,7 +15,7 @@ LOCAL_IMAGES_DIR = "local_images"
 
 
 def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
-    url = "https://visual-geoloc-docker-766802765455.europe-west1.run.app/evaluate"
+    url = st.secrets["API_URL"]
     params = {
         "guessed_longitude": guessed_lon,
         "guessed_latitude": guessed_lat,
@@ -40,7 +41,9 @@ def load_images_pool():
     """Download all images under GCS_PREFIX once, and build the images pool from them."""
     os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 
-    client = storage.Client()
+    gcs_secrets = st.secrets["connections"]["gcs"]
+    credentials = service_account.Credentials.from_service_account_info(gcs_secrets)
+    client = storage.Client(credentials=credentials, project=gcs_secrets["project_id"])
     bucket = client.bucket(BUCKET_NAME)
     blobs = list(bucket.list_blobs(prefix=GCS_PREFIX))
 
@@ -95,7 +98,7 @@ st.markdown("""
 
 st.title("🌍 Geoguesser 2.0-ish")
 st.markdown(
-    '<p class="subtitle-spaced">Can you beat the machine at its own game?<br>Guess the location, then find out if you\'re smarter than our neural network 🧠</p>',
+    '<p class="subtitle-spaced">Can you beat the machine at its own game?<br>Guess the location, then find out if you\'re smarter than a neural network 🧠</p>',
     unsafe_allow_html=True
 )
 
@@ -178,7 +181,7 @@ with col2:
 
 btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 with btn_col2:
-    if st.button("🤓 Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
+    if st.button("✅ Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
         with st.spinner("Crunching the numbers..."):
             result = call_evaluate_api(
                 guessed_lon=st.session_state.guessed_lon,
@@ -227,12 +230,3 @@ with btn_col2:
         st.session_state.guessed_lat = None
         st.session_state.guessed_lon = None
         st.rerun()
-
-
-st.html( """<!-- Yeah, this is a Motherfucking Website...
-        (see https://motherfuckingwebsite.com/)
-
-        "Good design is as little design as possible."
-        - some German motherfucker
-
-        -->""")
