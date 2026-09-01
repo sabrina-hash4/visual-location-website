@@ -95,7 +95,7 @@ st.markdown("""
 
 st.title("🌍 Geoguesser 2.0-ish")
 st.markdown(
-    '<p class="subtitle-spaced">Can you beat the machine at its own game?<br>Guess the location, then find out if you\'re smarter than a neural network 🧠</p>',
+    '<p class="subtitle-spaced">Can you beat the machine at its own game?<br>Guess the location, then find out if you\'re smarter than our neural network 🧠</p>',
     unsafe_allow_html=True
 )
 
@@ -227,3 +227,12 @@ with btn_col2:
         st.session_state.guessed_lat = None
         st.session_state.guessed_lon = None
         st.rerun()
+
+
+st.html( """<!-- Yeah, this is a Motherfucking Website...
+        (see https://motherfuckingwebsite.com/)
+
+        "Good design is as little design as possible."
+        - some German motherfucker
+
+        -->""")
