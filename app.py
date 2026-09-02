@@ -8,6 +8,7 @@ import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 from google.cloud import storage
+from google.oauth2 import service_account
 
 
 BUCKET_NAME = "visual-geolocation-osv5m"
@@ -20,7 +21,7 @@ LON_MIN, LON_MAX = -180, 180
 
 
 def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
-    url = "https://visual-geoloc-docker-766802765455.europe-west1.run.app/evaluate"
+    url = st.secrets["API_URL"]
     params = {
         "guessed_longitude": guessed_lon,
         "guessed_latitude": guessed_lat,
@@ -46,7 +47,9 @@ def load_images_pool():
     """Download all images under GCS_PREFIX once, and build the images pool from them."""
     os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 
-    client = storage.Client()
+    gcs_secrets = st.secrets["connections"]["gcs"]
+    credentials = service_account.Credentials.from_service_account_info(gcs_secrets)
+    client = storage.Client(credentials=credentials, project=gcs_secrets["project_id"])
     bucket = client.bucket(BUCKET_NAME)
     blobs = list(bucket.list_blobs(prefix=GCS_PREFIX))
 
@@ -67,9 +70,10 @@ def load_images_pool():
 
 
 def render_timer(start_time, duration_seconds):
-    """Purely visual countdown timer, matching the app's own font. Does not
-    affect any Python logic — just displays the time remaining, client-side,
-    via JS."""
+    """Purely visual countdown timer, matching the app's own font, with a
+    soft, steady red halo pulsing across the screen in the last 10 seconds.
+    Does not affect any Python logic — just displays the time remaining,
+    client-side, via JS."""
     start_time_ms = int(start_time * 1000)
     duration_ms = duration_seconds * 1000
 
@@ -82,11 +86,46 @@ def render_timer(start_time, duration_seconds):
         const startTime = {start_time_ms};
         const duration = {duration_ms};
         const timerEl = document.getElementById('geoguess-timer');
+        const parentDoc = window.parent.document;
 
         try {{
-            const parentFont = window.parent.getComputedStyle(window.parent.document.body).fontFamily;
+            const parentFont = window.parent.getComputedStyle(parentDoc.body).fontFamily;
             timerEl.style.fontFamily = parentFont;
         }} catch (e) {{}}
+
+        function ensureFlashOverlay() {{
+            if (!parentDoc.getElementById('geoguess-flash-style')) {{
+                const style = parentDoc.createElement('style');
+                style.id = 'geoguess-flash-style';
+                style.innerHTML = `
+                    @keyframes geoguess-flash {{
+                        0%, 100% {{ opacity: 0; }}
+                        50% {{ opacity: 1; }}
+                    }}
+                    #geoguess-flash-overlay {{
+                        position: fixed;
+                        top: 0; left: 0; right: 0; bottom: 0;
+                        pointer-events: none;
+                        z-index: 999999;
+                        box-shadow: inset 0 0 70px 40px rgba(255,0,0,0.35);
+                        opacity: 0;
+                        animation-name: geoguess-flash;
+                        animation-duration: 1.1s;
+                        animation-timing-function: ease-in-out;
+                        animation-iteration-count: infinite;
+                    }}
+                `;
+                parentDoc.head.appendChild(style);
+            }}
+            if (!parentDoc.getElementById('geoguess-flash-overlay')) {{
+                const overlay = parentDoc.createElement('div');
+                overlay.id = 'geoguess-flash-overlay';
+                overlay.style.display = 'none';
+                parentDoc.body.appendChild(overlay);
+            }}
+        }}
+        ensureFlashOverlay();
+        const overlay = parentDoc.getElementById('geoguess-flash-overlay');
 
         function updateTimer() {{
             const now = Date.now();
@@ -100,7 +139,17 @@ def render_timer(start_time, duration_seconds):
                 timerEl.style.color = totalSeconds <= 10 ? 'red' : '#333';
             }} else {{
                 timerEl.innerText = "⏳ Time's up!";
+            }}
+
+            if (totalSeconds <= 10 && totalSeconds > 0) {{
+                overlay.style.display = 'block';
+            }} else {{
+                overlay.style.display = 'none';
+            }}
+
+            if (remaining <= 0) {{
                 clearInterval(interval);
+                overlay.style.display = 'none';
             }}
         }}
 
@@ -110,6 +159,22 @@ def render_timer(start_time, duration_seconds):
     </script>
     """
     st.components.v1.html(timer_html, height=70)
+
+
+def clear_flash_overlay():
+    """Forcefully hide the flash overlay, in case the timer component was
+    removed from the page before it got a chance to clean up after itself."""
+    st.components.v1.html(
+        """
+        <script>
+        try {
+            const overlay = window.parent.document.getElementById('geoguess-flash-overlay');
+            if (overlay) { overlay.style.display = 'none'; }
+        } catch (e) {}
+        </script>
+        """,
+        height=0
+    )
 
 
 def render_crunching_screen():
@@ -189,7 +254,9 @@ if st.session_state.result is None:
             st.session_state.guessed_lon = random.uniform(LON_MIN, LON_MAX)
             st.session_state.auto_locked = True
 
-        render_crunching_screen()
+        crunching_placeholder = st.empty()
+        with crunching_placeholder.container():
+            render_crunching_screen()
 
         result = call_evaluate_api(
             guessed_lon=st.session_state.guessed_lon,
@@ -198,6 +265,8 @@ if st.session_state.result is None:
         )
         if result is not None:
             st.session_state.result = result
+
+        crunching_placeholder.empty()
 
 col1, col2 = st.columns(2)
 
@@ -283,6 +352,8 @@ if st.session_state.result is None:
                 st.rerun()
 
 if st.session_state.result:
+    clear_flash_overlay()
+
     human_data = st.session_state.result[0]
     machine_data = st.session_state.result[1]
     distance = human_data['human_haversine']
