@@ -423,6 +423,7 @@ if st.session_state.result is None:
                 st.session_state.result = result
                 st.rerun()
 
+
 if st.session_state.result:
     clear_flash_overlay()
 
