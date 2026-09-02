@@ -8,19 +8,20 @@ import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 from google.cloud import storage
+from google.oauth2 import service_account
 
 
 BUCKET_NAME = "visual-geolocation-osv5m"
 GCS_PREFIX = "data_for_front/raw_data"
 LOCAL_IMAGES_DIR = "local_images"
-TIMER_DURATION = 15
+TIMER_DURATION = 60
 
 LAT_MIN, LAT_MAX = -55, 80
 LON_MIN, LON_MAX = -180, 180
 
 
 def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
-    url = "https://visual-geoloc-docker-766802765455.europe-west1.run.app/evaluate"
+    url = st.secrets["API_URL"]
     params = {
         "guessed_longitude": guessed_lon,
         "guessed_latitude": guessed_lat,
@@ -46,7 +47,9 @@ def load_images_pool():
     """Download all images under GCS_PREFIX once, and build the images pool from them."""
     os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 
-    client = storage.Client()
+    gcs_secrets = st.secrets["connections"]["gcs"]
+    credentials = service_account.Credentials.from_service_account_info(gcs_secrets)
+    client = storage.Client(credentials=credentials, project=gcs_secrets["project_id"])
     bucket = client.bucket(BUCKET_NAME)
     blobs = list(bucket.list_blobs(prefix=GCS_PREFIX))
 
