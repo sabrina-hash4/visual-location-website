@@ -282,7 +282,12 @@ with col1:
 with col2:
     st.subheader("📍 Place your guess on the map")
 
-    m = folium.Map(location=[20, 0], zoom_start=2)
+    m = folium.Map(
+        location=[20, 0],
+        zoom_start=2,
+        tiles="https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png?lang=en",
+        attr='Wikimedia maps | Map data © OpenStreetMap contributors'
+    )
 
     points = []
 
