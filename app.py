@@ -290,8 +290,8 @@ with col2:
     m = folium.Map(
         location=[20, 0],
         zoom_start=2,
-        tiles="https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png?lang=en",
-        attr='Wikimedia maps | Map data © OpenStreetMap contributors'
+        tiles=f"https://api.maptiler.com/maps/basic-v2/{{z}}/{{x}}/{{y}}.png?key={st.secrets['MAPTILER_KEY']}",
+        attr='© MapTiler © OpenStreetMap contributors'
     )
 
     points = []
