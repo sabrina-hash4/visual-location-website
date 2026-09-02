@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 BUCKET_NAME = "visual-geolocation-osv5m"
 GCS_PREFIX = "data_for_front/raw_data"
 LOCAL_IMAGES_DIR = "local_images"
-TIMER_DURATION = 60
+TIMER_DURATION = 70
 
 LAT_MIN, LAT_MAX = -55, 80
 LON_MIN, LON_MAX = -180, 180
@@ -336,8 +336,7 @@ if st.session_state.result is None:
     elapsed = time.time() - st.session_state.challenge_start_time
 
     if elapsed < TIMER_DURATION:
-        if st.session_state.guessed_lat is None:
-            st_autorefresh(interval=2000, key="ticking_autorefresh")
+        st_autorefresh(interval=5000, key="ticking_autorefresh")
     else:
         if st.session_state.guessed_lat is None:
             st.session_state.guessed_lat = random.uniform(LAT_MIN, LAT_MAX)
