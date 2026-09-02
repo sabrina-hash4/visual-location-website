@@ -14,7 +14,7 @@ from google.oauth2 import service_account
 BUCKET_NAME = "visual-geolocation-osv5m"
 GCS_PREFIX = "data_for_front/raw_data"
 LOCAL_IMAGES_DIR = "local_images"
-TIMER_DURATION = 70
+TIMER_DURATION = 20
 
 LAT_MIN, LAT_MAX = -55, 80
 LON_MIN, LON_MAX = -180, 180
@@ -34,27 +34,6 @@ def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
         return None
 
     return response.json()
-
-
-
-
-def call_predict_api(image_bytes, filename):
-    """Envoie une photo perso à l'endpoint de prédiction et renvoie la
-    position devinée par le modèle (pas de vraie position ici)."""
-    url = st.secrets["PREDICT_API_URL"]  # <-- à ajouter dans tes secrets
-    files = {"image": (filename, image_bytes)}
-    response = requests.post(url, files=files)
-
-    if response.status_code != 200:
-        st.error(f"API Error ({response.status_code}): {response.text}")
-        return None
-
-    return response.json()  # attendu: {"machine_lat": ..., "machine_lon": ...}
-
-
-
-
-
 
 
 def get_image_base64(path):
@@ -255,69 +234,6 @@ st.markdown(
 IMAGES_POOL = load_images_pool()
 
 
-with st.expander("📤 Essayer avec ta propre photo"):
-    uploaded_file = st.file_uploader("Choisis une image", type=["jpg", "jpeg", "png"], key="custom_upload")
-
-    if uploaded_file is not None:
-        if "custom_guess_lat" not in st.session_state:
-            st.session_state.custom_guess_lat = None
-            st.session_state.custom_guess_lon = None
-            st.session_state.custom_result = None
-
-        cu_col1, cu_col2 = st.columns(2)
-
-        with cu_col1:
-            st.image(uploaded_file, use_container_width=True)
-
-        with cu_col2:
-            cm = folium.Map(location=[20, 0], zoom_start=2)
-
-            cu_points = []
-            if st.session_state.custom_guess_lat is not None:
-                folium.Marker(
-                    [st.session_state.custom_guess_lat, st.session_state.custom_guess_lon],
-                    popup="Ton guess", icon=folium.Icon(color="blue")
-                ).add_to(cm)
-                cu_points.append([st.session_state.custom_guess_lat, st.session_state.custom_guess_lon])
-
-            if st.session_state.custom_result:
-                m_lat = st.session_state.custom_result["machine_lat"]
-                m_lon = st.session_state.custom_result["machine_lon"]
-                folium.Marker([m_lat, m_lon], popup="Le modèle", icon=folium.Icon(color="red")).add_to(cm)
-                cu_points.append([m_lat, m_lon])
-
-            if len(cu_points) >= 2:
-                cm.fit_bounds(cu_points)
-
-            custom_map_data = st_folium(
-                cm, width=None, height=350,
-                returned_objects=["last_clicked"] if st.session_state.custom_result is None else [],
-                key="custom_map"
-            )
-
-            if st.session_state.custom_result is None and custom_map_data and custom_map_data.get("last_clicked"):
-                st.session_state.custom_guess_lat = custom_map_data["last_clicked"]["lat"]
-                st.session_state.custom_guess_lon = custom_map_data["last_clicked"]["lng"]
-                st.rerun()
-
-        if st.session_state.custom_guess_lat is not None and st.session_state.custom_result is None:
-            if st.button("🔮 Voir la prédiction du modèle", key="custom_predict_btn"):
-                with st.spinner("Le modèle analyse ta photo..."):
-                    result = call_predict_api(uploaded_file.getvalue(), uploaded_file.name)
-                if result is not None:
-                    st.session_state.custom_result = result
-                    st.rerun()
-
-        if st.session_state.custom_result:
-            st.success("🔮 Voici la prédiction du modèle sur la carte (marqueur rouge)")
-
-        if st.button("🔄 Nouvelle photo", key="custom_reset_btn"):
-            st.session_state.custom_guess_lat = None
-            st.session_state.custom_guess_lon = None
-            st.session_state.custom_result = None
-            st.rerun()
-
-
 MAP_HEIGHT = 500
 
 if "current_challenge" not in st.session_state:
@@ -328,15 +244,24 @@ if "current_challenge" not in st.session_state:
     st.session_state.challenge_start_time = time.time()
     st.session_state.auto_locked = False
 
-# --- Auto-lock check: runs BEFORE the layout below, and never calls
-# st.rerun() itself. If time is up, it computes the result right here and
-# lets the script continue naturally into the layout/results below, all
-# within this same run. ---
+# --- Auto-lock check: schedules a refresh timed to fire right at the
+# deadline (recalculated each run based on real elapsed time, so it stays
+# accurate even across reruns triggered by map clicks). No repeating
+# interval, so nothing fires while a "Lock in" click is mid-computation,
+# except in the rare case of clicking in the last ~300ms before the
+# natural timeout. Runs BEFORE the layout below and never calls
+# st.rerun() itself: if time is up, it computes the result right here and
+# lets the script continue naturally into the layout below, all within
+# this same run. ---
 if st.session_state.result is None:
     elapsed = time.time() - st.session_state.challenge_start_time
+    remaining = TIMER_DURATION - elapsed
 
-    if elapsed < TIMER_DURATION:
-        st_autorefresh(interval=5000, key="ticking_autorefresh")
+    if remaining > 0:
+        st_autorefresh(
+            interval=int(remaining * 1000) + 300,
+            key="deadline_check"
+        )
     else:
         if st.session_state.guessed_lat is None:
             st.session_state.guessed_lat = random.uniform(LAT_MIN, LAT_MAX)
