@@ -3,19 +3,24 @@ import random
 import requests
 import base64
 import os
+import time
 import folium
 from streamlit_folium import st_folium
+from streamlit_autorefresh import st_autorefresh
 from google.cloud import storage
-from google.oauth2 import service_account
 
 
 BUCKET_NAME = "visual-geolocation-osv5m"
 GCS_PREFIX = "data_for_front/raw_data"
 LOCAL_IMAGES_DIR = "local_images"
+TIMER_DURATION = 15
+
+LAT_MIN, LAT_MAX = -55, 80
+LON_MIN, LON_MAX = -180, 180
 
 
 def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
-    url = st.secrets["API_URL"]
+    url = "https://visual-geoloc-docker-766802765455.europe-west1.run.app/evaluate"
     params = {
         "guessed_longitude": guessed_lon,
         "guessed_latitude": guessed_lat,
@@ -41,9 +46,7 @@ def load_images_pool():
     """Download all images under GCS_PREFIX once, and build the images pool from them."""
     os.makedirs(LOCAL_IMAGES_DIR, exist_ok=True)
 
-    gcs_secrets = st.secrets["connections"]["gcs"]
-    credentials = service_account.Credentials.from_service_account_info(gcs_secrets)
-    client = storage.Client(credentials=credentials, project=gcs_secrets["project_id"])
+    client = storage.Client()
     bucket = client.bucket(BUCKET_NAME)
     blobs = list(bucket.list_blobs(prefix=GCS_PREFIX))
 
@@ -61,6 +64,63 @@ def load_images_pool():
         pool.append({"id": image_id, "path": local_path})
 
     return pool
+
+
+def render_timer(start_time, duration_seconds):
+    """Purely visual countdown timer, matching the app's own font. Does not
+    affect any Python logic — just displays the time remaining, client-side,
+    via JS."""
+    start_time_ms = int(start_time * 1000)
+    duration_ms = duration_seconds * 1000
+
+    timer_html = f"""
+    <div id="geoguess-timer" style="text-align:center; font-size:2.4rem; font-weight:800; color:#333;">
+        ⏳ 01:00
+    </div>
+    <script>
+    (function() {{
+        const startTime = {start_time_ms};
+        const duration = {duration_ms};
+        const timerEl = document.getElementById('geoguess-timer');
+
+        try {{
+            const parentFont = window.parent.getComputedStyle(window.parent.document.body).fontFamily;
+            timerEl.style.fontFamily = parentFont;
+        }} catch (e) {{}}
+
+        function updateTimer() {{
+            const now = Date.now();
+            const remaining = Math.max(0, duration - (now - startTime));
+            const totalSeconds = Math.ceil(remaining / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const secs = totalSeconds % 60;
+
+            if (remaining > 0) {{
+                timerEl.innerText = "⏳ " + String(minutes).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+                timerEl.style.color = totalSeconds <= 10 ? 'red' : '#333';
+            }} else {{
+                timerEl.innerText = "⏳ Time's up!";
+                clearInterval(interval);
+            }}
+        }}
+
+        const interval = setInterval(updateTimer, 200);
+        updateTimer();
+    }})();
+    </script>
+    """
+    st.components.v1.html(timer_html, height=70)
+
+
+def render_crunching_screen():
+    st.markdown(
+        """
+        <div style="text-align:center; margin-top:3rem; margin-bottom:3rem;">
+            <div style="font-size:2.2rem; font-weight:800;">🤔 Crunching the numbers...</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 st.set_page_config(layout="wide", page_title="Geoguesser 2.0-ish", page_icon="🌍")
@@ -111,6 +171,33 @@ if "current_challenge" not in st.session_state:
     st.session_state.result = None
     st.session_state.guessed_lat = None
     st.session_state.guessed_lon = None
+    st.session_state.challenge_start_time = time.time()
+    st.session_state.auto_locked = False
+
+# --- Auto-lock check: runs BEFORE the layout below, and never calls
+# st.rerun() itself. If time is up, it computes the result right here and
+# lets the script continue naturally into the layout/results below, all
+# within this same run. ---
+if st.session_state.result is None:
+    elapsed = time.time() - st.session_state.challenge_start_time
+
+    if elapsed < TIMER_DURATION:
+        st_autorefresh(interval=2000, key="ticking_autorefresh")
+    else:
+        if st.session_state.guessed_lat is None:
+            st.session_state.guessed_lat = random.uniform(LAT_MIN, LAT_MAX)
+            st.session_state.guessed_lon = random.uniform(LON_MIN, LON_MAX)
+            st.session_state.auto_locked = True
+
+        render_crunching_screen()
+
+        result = call_evaluate_api(
+            guessed_lon=st.session_state.guessed_lon,
+            guessed_lat=st.session_state.guessed_lat,
+            challenge_id=st.session_state.current_challenge["id"]
+        )
+        if result is not None:
+            st.session_state.result = result
 
 col1, col2 = st.columns(2)
 
@@ -163,11 +250,11 @@ with col2:
         m,
         width=None,
         height=MAP_HEIGHT,
-        returned_objects=["last_clicked"],
+        returned_objects=["last_clicked"] if st.session_state.result is None else [],
         key="main_map"
     )
 
-    if map_data and map_data.get("last_clicked"):
+    if st.session_state.result is None and map_data and map_data.get("last_clicked"):
         new_lat = map_data["last_clicked"]["lat"]
         new_lon = map_data["last_clicked"]["lng"]
 
@@ -179,18 +266,21 @@ with col2:
     if st.session_state.guessed_lat is not None:
         st.caption(f"Your guess: {st.session_state.guessed_lat:.4f}, {st.session_state.guessed_lon:.4f}")
 
-btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-with btn_col2:
-    if st.button("✅ Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
-        with st.spinner("Crunching the numbers..."):
-            result = call_evaluate_api(
-                guessed_lon=st.session_state.guessed_lon,
-                guessed_lat=st.session_state.guessed_lat,
-                challenge_id=st.session_state.current_challenge["id"]
-            )
-        if result is not None:
-            st.session_state.result = result
-            st.rerun()
+if st.session_state.result is None:
+    render_timer(st.session_state.challenge_start_time, TIMER_DURATION)
+
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
+    with btn_col2:
+        if st.button("✅ Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
+            with st.spinner("Crunching the numbers..."):
+                result = call_evaluate_api(
+                    guessed_lon=st.session_state.guessed_lon,
+                    guessed_lat=st.session_state.guessed_lat,
+                    challenge_id=st.session_state.current_challenge["id"]
+                )
+            if result is not None:
+                st.session_state.result = result
+                st.rerun()
 
 if st.session_state.result:
     human_data = st.session_state.result[0]
@@ -199,6 +289,9 @@ if st.session_state.result:
     machine_distance = machine_data['machine_haversine']
 
     st.divider()
+
+    if st.session_state.auto_locked:
+        st.warning("⏰ Time's up! We placed a random guess for you since none was locked in.")
 
     if distance < 100:
         st.success(f"🎉 Spot on! Only {distance:.0f} km off")
@@ -229,4 +322,6 @@ with btn_col2:
         st.session_state.result = None
         st.session_state.guessed_lat = None
         st.session_state.guessed_lon = None
+        st.session_state.challenge_start_time = time.time()
+        st.session_state.auto_locked = False
         st.rerun()
