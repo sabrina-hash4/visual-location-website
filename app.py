@@ -72,7 +72,8 @@ def load_images_pool():
 def render_timer(start_time, duration_seconds):
     """Purely visual countdown timer, matching the app's own font, with a
     soft, steady red halo pulsing across the screen in the last 10 seconds.
-    Does not affect any Python logic — just displays the time remaining,
+    The overlay has pointer-events: none, so it never blocks clicks. Does
+    not affect any Python logic — just displays the time remaining,
     client-side, via JS."""
     start_time_ms = int(start_time * 1000)
     duration_ms = duration_seconds * 1000
@@ -105,7 +106,7 @@ def render_timer(start_time, duration_seconds):
                     #geoguess-flash-overlay {{
                         position: fixed;
                         top: 0; left: 0; right: 0; bottom: 0;
-                        pointer-events: none;
+                        pointer-events: none !important;
                         z-index: 999999;
                         box-shadow: inset 0 0 70px 40px rgba(255,0,0,0.35);
                         opacity: 0;
@@ -207,6 +208,9 @@ st.markdown("""
         font-size: 1.3rem !important;
         padding: 0.75rem 1.5rem !important;
         border-radius: 50px !important;
+        position: relative;
+        z-index: 1000000;
+        pointer-events: auto !important;
     }
     .stButton button p {
         font-size: 1.3rem !important;
@@ -247,7 +251,8 @@ if st.session_state.result is None:
     elapsed = time.time() - st.session_state.challenge_start_time
 
     if elapsed < TIMER_DURATION:
-        st_autorefresh(interval=2000, key="ticking_autorefresh")
+        if st.session_state.guessed_lat is None:
+            st_autorefresh(interval=2000, key="ticking_autorefresh")
     else:
         if st.session_state.guessed_lat is None:
             st.session_state.guessed_lat = random.uniform(LAT_MIN, LAT_MAX)
@@ -343,18 +348,38 @@ with col2:
 if st.session_state.result is None:
     render_timer(st.session_state.challenge_start_time, TIMER_DURATION)
 
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-    with btn_col2:
-        if st.button("✅ Lock in my guess", type="primary", use_container_width=True) and st.session_state.guessed_lat is not None:
-            with st.spinner("Crunching the numbers..."):
-                result = call_evaluate_api(
-                    guessed_lon=st.session_state.guessed_lon,
-                    guessed_lat=st.session_state.guessed_lat,
-                    challenge_id=st.session_state.current_challenge["id"]
-                )
-            if result is not None:
-                st.session_state.result = result
-                st.rerun()
+# --- Buttons row: always right under the image/map section, regardless
+# of whether results are shown below or not. ---
+btn_col1, btn_col2 = st.columns(2)
+with btn_col1:
+    try_again_clicked = st.button("🔄 Let's give it another try", use_container_width=True)
+with btn_col2:
+    lock_clicked = st.button(
+        "✅ Lock in my guess",
+        type="primary",
+        use_container_width=True,
+        disabled=st.session_state.result is not None
+    )
+
+if lock_clicked and st.session_state.result is None and st.session_state.guessed_lat is not None:
+    with st.spinner("Crunching the numbers..."):
+        result = call_evaluate_api(
+            guessed_lon=st.session_state.guessed_lon,
+            guessed_lat=st.session_state.guessed_lat,
+            challenge_id=st.session_state.current_challenge["id"]
+        )
+    if result is not None:
+        st.session_state.result = result
+        st.rerun()
+
+if try_again_clicked:
+    st.session_state.current_challenge = random.choice(IMAGES_POOL)
+    st.session_state.result = None
+    st.session_state.guessed_lat = None
+    st.session_state.guessed_lon = None
+    st.session_state.challenge_start_time = time.time()
+    st.session_state.auto_locked = False
+    st.rerun()
 
 if st.session_state.result:
     clear_flash_overlay()
@@ -388,16 +413,3 @@ if st.session_state.result:
     with score_col2:
         st.metric("🤖 Model's distance", f"{machine_distance:.0f} km")
         st.metric("🎯 Model's score", f"{machine_data['machine_geoscore']:.2f}")
-
-st.divider()
-
-btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-with btn_col2:
-    if st.button("🔄 Let's give it another try", use_container_width=True):
-        st.session_state.current_challenge = random.choice(IMAGES_POOL)
-        st.session_state.result = None
-        st.session_state.guessed_lat = None
-        st.session_state.guessed_lon = None
-        st.session_state.challenge_start_time = time.time()
-        st.session_state.auto_locked = False
-        st.rerun()
