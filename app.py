@@ -14,10 +14,45 @@ from google.oauth2 import service_account
 BUCKET_NAME = "visual-geolocation-osv5m"
 GCS_PREFIX = "data_for_front/raw_data"
 LOCAL_IMAGES_DIR = "local_images"
-TIMER_DURATION = 20
+TIMER_DURATION = 60
 
 LAT_MIN, LAT_MAX = -55, 80
 LON_MIN, LON_MAX = -180, 180
+
+SCORE_COMMENTS = {
+    (0, 100): [
+        "Okay Sherlock, we get it 🔍",
+        "You've clearly done this before... suspicious 🤨"
+    ],
+    (100, 1000): [
+        "Impressive! Did you memorize a world atlas for fun? 📖",
+        "Certified geography nerd, and we mean that as a compliment 🤓"
+    ],
+    (1000, 3000): [
+        "You'd survive a pub quiz, at least 🍺",
+        "Somewhere on Earth, that counts for something 🌐"
+    ],
+    (3000, 8000): [
+        "Bold strategy, let's see if it pays off... it didn't 😅",
+        "We wouldn't trust you to navigate a parking lot 🅿️"
+    ],
+    (8000, 15000): [
+        "Keep pushing and you might reach Mars 🚀",
+        "At this rate, you'll discover a new continent by accident 🗺️"
+    ],
+    (14000, float("inf")): [
+        "We wouldn't go on a vacation with you 🧳",
+        "Google Maps is right there, you know 📱",
+        "Your guess and reality are no longer on speaking terms 💔"
+    ],
+}
+
+
+def get_score_comment(distance_km):
+    for (low, high), comments in SCORE_COMMENTS.items():
+        if low <= distance_km < high:
+            return random.choice(comments)
+    return ""
 
 
 def call_evaluate_api(guessed_lon, guessed_lat, challenge_id):
@@ -359,9 +394,7 @@ if st.session_state.result is None:
 
 # --- Buttons row: always right under the image/map section, regardless
 # of whether results are shown below or not. ---
-btn_col1, btn_col2 = st.columns(2)
-with btn_col1:
-    try_again_clicked = st.button("🔄 Let's give it another try", use_container_width=True)
+btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 with btn_col2:
     lock_clicked = st.button(
         "✅ Lock in my guess",
@@ -369,6 +402,7 @@ with btn_col2:
         use_container_width=True,
         disabled=st.session_state.result is not None
     )
+    try_again_clicked = st.button("🔄 Let's give it another try", use_container_width=True)
 
 if lock_clicked and st.session_state.result is None and st.session_state.guessed_lat is not None:
     with st.spinner("Crunching the numbers..."):
@@ -403,12 +437,8 @@ if st.session_state.result:
     if st.session_state.auto_locked:
         st.warning("⏰ Time's up! We placed a random guess for you since none was locked in.")
 
-    if distance < 100:
-        st.success(f"🎉 Spot on! Only {distance:.0f} km off")
-    elif distance < 1000:
-        st.info(f"👍 Not bad! {distance:.0f} km off")
-    else:
-        st.warning(f"😅 {distance:.0f} km off — plenty of room to improve")
+    comment = get_score_comment(distance)
+    st.info(f"{comment} ({distance:.0f} km off)")
 
     if distance < machine_distance:
         st.success("🏆 You beat the machine this time!")
